@@ -1,0 +1,145 @@
+USE [MF11nic.caliboso]
+
+------------------------------------------------------------------------------------
+--        AVERAGES ACCORDING TO WHERE EACH TEAM WAS ELIMINATED          
+--     (To adjust per round, edit WHERE statement in INSERT query)
+------------------------------------------------------------------------------------
+
+--UPDATE SET Command to change all 'NA' Seed rankings to 0
+/*UPDATE [dbo].[cbb]
+SET [SEED] = 0
+WHERE [SEED] = 'NA'
+
+UPDATE [dbo].[cbb]
+SET [POSTSEASON] = '1ST'
+WHERE [POSTSEASON] = '1st'
+--*/
+
+DECLARE @Arrayfor64 TABLE ([TEAM] nvarchar (50), [SEED] int, [Games] dec(10,2), [Wins] dec(10,2), [ADJOE] dec(10,2), [ADJDE] dec(10,2),
+[EFG_O] dec(10,2), [EFG_D] dec(10,2), [TO Rate] dec(10,2), [Steal Rate] dec(10,2), [ORB] dec(10,2), [DRB] dec(10,2), [FT Rate] dec(10,2),
+[2pt %] dec(10,2), [3pt %] dec(10,2), [ADJ Temp] dec(10,2), [POSTSEASON] nvarchar(15))
+
+DECLARE @G dec(10,2), @W dec(10,2), @ADJOE dec(10,2), @ADJDE dec(10,2), @EFGO dec(10,2), @EFGD dec(10,2), @TO dec(10,2), @Steal dec(10,2),
+@ORB dec(10,2), @DRB dec(10,2), @FT dec(10,2), @2pt dec(10,2),
+@3pt dec(10,2), @Temp dec(10,2)
+
+INSERT INTO @Arrayfor64 ([TEAM], [Games], [Wins], [ADJOE], [ADJDE], [EFG_O], [EFG_D], [TO Rate], [Steal Rate], [ORB],
+[DRB], [FT Rate], [2pt %], [3pt %], [ADJ Temp], [SEED], [POSTSEASON])
+(SELECT [TEAM], G, W, ADJOE, ADJDE, EFG_O, EFG_D, [TOR], [TORD], ORB, DRB, FTR, [_2P_O], [_3P_O], [ADJ_T], [SEED], [POSTSEASON]
+FROM [MF11nic.caliboso].[dbo].[cbb]
+WHERE POSTSEASON = 'R64'
+AND SEED NOT IN (16, 1) AND SEED IN  (13, 20)
+)
+
+SET @G = (SELECT AVG([Games]) FROM @Arrayfor64)
+SET @W = (SELECT AVG([Wins]) FROM @Arrayfor64)
+SET @ADJOE = (SELECT AVG([ADJOE]) FROM @Arrayfor64)
+SET @ADJDE = (SELECT AVG([ADJDE]) FROM @Arrayfor64)
+SET @EFGO = (SELECT AVG([EFG_O]) FROM @Arrayfor64)
+SET @EFGD = (SELECT AVG([EFG_D]) FROM @Arrayfor64)
+SET @TO = (SELECT AVG([TO Rate]) FROM @Arrayfor64)
+SET @Steal = (SELECT AVG([Steal Rate]) FROM @Arrayfor64)
+SET @ORB = (SELECT AVG([ORB]) FROM @Arrayfor64)
+SET @DRB = (SELECT AVG([DRB]) FROM @Arrayfor64)
+SET @FT = (SELECT AVG([FT Rate]) FROM @Arrayfor64)
+SET @2pt = (SELECT AVG([2pt %]) FROM @Arrayfor64)
+SET @3pt = (SELECT AVG([3pt %]) FROM @Arrayfor64)
+SET @Temp = (SELECT AVG([ADJ Temp]) FROM @Arrayfor64)
+
+INSERT INTO @Arrayfor64 VALUES ('AVERAGES', '20', @g, @w, @ADJOE, @ADJDE, @EFGO ,@EFGD, @TO, @Steal, @ORB, @DRB, @FT, @2pt, @3pt, @Temp, 'AVERAGES')
+
+SELECT * FROM @Arrayfor64
+ORDER BY [SEED]
+
+-------------------------------------------------------------------------------
+-- WINDOW FUNCTIONS TO ANALYZE OFFENSIVE CAPABILITY OF ELITE-8 + TEAMS
+-------------------------------------------------------------------------------
+
+SELECT TEAM, SEED, POSTSEASON,
+
+FORMAT(AVG([ADJOE])
+OVER(PARTITION BY [POSTSEASON]
+ORDER BY (SEED)), 'N2') AS 'AVG ADJOE',
+
+FORMAT(AVG([EFG_O])
+OVER(PARTITION BY [POSTSEASON]
+ORDER BY (SEED)), 'N2') AS 'AVG Eff. FG%',
+
+FORMAT(AVG([TOR])
+OVER(PARTITION BY [POSTSEASON]
+ORDER BY (SEED)), 'N2') AS 'AVG TO Rate',
+
+FORMAT(AVG([_2P_O])
+OVER(PARTITION BY [POSTSEASON]
+ORDER BY (SEED)), 'N2') AS 'AVG 2PT %',
+
+FORMAT(AVG([_3P_O])
+OVER(PARTITION BY [POSTSEASON]
+ORDER BY (SEED)), 'N2') AS 'AVG 3PT %',
+
+FORMAT(AVG([ADJ_T])
+OVER(PARTITION BY [POSTSEASON]
+ORDER BY (SEED)), 'N2') AS 'AVG TEMPO'
+
+FROM [dbo].[cbb]
+WHERE [POSTSEASON] IN ('1st', '2ND', '4 Final', '8 Elite')
+GROUP BY [TEAM], [SEED], [POSTSEASON], ADJOE, EFG_O, TOR, _2P_O, _3P_O, ADJ_T
+
+----------------------------------------------------------------
+--       Averaging Different Ranking Systems
+--     (Compare Actual Seed vs. Expected Seed)
+----------------------------------------------------------------
+
+DECLARE @ArrayForMetrics TABLE ([TEAM] nvarchar(50), [Act. SEED] int, [Average Rank] dec(10,2), [KenPom Ranking] int,
+[Power Ranking] int, [Wins Against Bubble] int, [SOS Rank] int, [Eff. FG Dif. Rank] int)
+
+INSERT INTO @ArrayForMetrics ([Team], [Act. SEED], [KenPom Ranking], [Power Ranking], [Wins Against Bubble], [SOS Rank], [Eff. FG Dif. Rank])
+(SELECT [TEAM], [SEED], Rank() OVER (ORDER BY([adjoe] - [adjde]) DESC), RANK() OVER (ORDER BY [BARTHAG] DESC),
+RANK() OVER (ORDER BY [WAB] DESC), RANK() OVER (ORDER BY [SOS_Rk]),
+RANK() OVER (ORDER BY (([EFG_O]-[EFG_D]) + ([TORD] - [TOR]))/2 DESC)
+FROM [dbo].[cbb21]
+WHERE [SEED] <> 0)
+
+UPDATE @ArrayForMetrics SET [Average Rank] = ([KenPom Ranking] + [Power Ranking] + [Wins Against Bubble] + [SOS Rank] + [Eff. FG Dif. Rank])/5.00
+SELECT [Team],
+
+CASE NTILE(17) OVER (ORDER BY[Average Rank])
+WHEN 1 THEN '1'
+WHEN 2 THEN '2'
+WHEN 3 THEN '3'
+WHEN 4 THEN '4'
+WHEN 5 THEN '5'
+WHEN 6 THEN '6'
+WHEN 7 THEN '7'
+WHEN 8 THEN '8'
+WHEN 9 THEN '9'
+WHEN 10 THEN '10'
+WHEN 11 THEN '11'
+WHEN 12 THEN '12'
+WHEN 13 THEN '13'
+WHEN 14 THEN '14'
+WHEN 15 THEN '15'
+WHEN 16 THEN '16'
+END AS [Exp. SEED],
+
+[Act. SEED], [Average Rank], [KenPom Ranking], [Power Ranking], [Wins Against Bubble], [SOS Rank], [Eff. FG Dif. Rank],
+
+    CASE
+WHEN [KenPom Ranking] <= 6 THEN 'Highly unlikely for KenPom > 6 to become champions'
+WHEN [KenPom Ranking] > 6 THEN 'On avg, only one team > 10 KenPom make Elite-8'
+END AS [Notes]
+
+FROM @ArrayForMetrics
+ORDER BY [Average Rank]
+
+-------------------------------------------------------------------------
+--  Offenive Averages for Teams that Finished in Selected Round
+--          (Change WHERE statement to adjust)
+-------------------------------------------------------------------------
+
+SELECT  FORMAT(AVG(ADJOE), 'N2') AS [Avg. Off. Eff.], FORMAT(AVG([EFG_O]), 'N2') AS [Avg. Eff. FG %], FORMAT(AVG([TOR]), 'N2') AS [Avg. TO Rate],
+FORMAT(AVG([_2P_O]), 'N2') AS [Avg. 2pt %], FORMAT(AVG([_3P_O]), 'N2') AS [Avg. 3pt %], FORMAT(AVG([ADJ_T]), 'N2') AS [Avg. Tempo],
+FORMAT(AVG([TORD]), 'N2') AS [Avg. TO Def.]
+
+FROM [dbo].[cbb]
+WHERE POSTSEASON = '1ST'
